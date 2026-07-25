@@ -1,5 +1,5 @@
 /**
- * tauriBridge.ts — Thin, isomorphic wrapper around Tauri v2's dialog + fs +
+ * tauriBridge.ts — Thin, isomorphic wrapper around Tauri v2's dialog and
  * command APIs.
  *
  * Design constraints:
@@ -57,7 +57,7 @@ export interface LoadedFile {
 export interface OpenDialogOptions {
   title?: string;
   multiple?: boolean;
-  /** e.g. `[{ name: '3D Models', extensions: ['stl', 'obj', '3mf', 'mtl'] }]` */
+  /** e.g. `[{ name: '3D Models', extensions: ['stl', 'obj', 'mtl'] }]` */
   filters?: { name: string; extensions: string[] }[];
 }
 
@@ -82,10 +82,9 @@ export interface SaveDialogOptions {
  */
 export async function openFileDialog(opts: OpenDialogOptions = {}): Promise<LoadedFile[]> {
   const filters = opts.filters ?? [
-    { name: '3D Models', extensions: ['stl', 'obj', '3mf', 'mtl'] },
+    { name: '3D Models', extensions: ['stl', 'obj', 'mtl'] },
     { name: 'STL', extensions: ['stl'] },
     { name: 'OBJ (+ MTL)', extensions: ['obj', 'mtl'] },
-    { name: '3MF', extensions: ['3mf'] },
   ];
 
   if (isTauri()) {
@@ -237,7 +236,7 @@ export async function getNativeInfo(): Promise<NativeAppInfo | null> {
 }
 
 /** Show a native message box, falling back to `window.alert()` in the browser. */
-export async function nativeAlert(message: string, title = 'STL Segmenter'): Promise<void> {
+export async function nativeAlert(message: string, title = 'Model Splitter'): Promise<void> {
   if (isTauri()) {
     const { message: show } = await import('@tauri-apps/plugin-dialog');
     await show(message, { title, kind: 'info' });
@@ -247,7 +246,7 @@ export async function nativeAlert(message: string, title = 'STL Segmenter'): Pro
 }
 
 /** Ask the user for confirmation. Resolves to `true` if they confirm. */
-export async function nativeConfirm(message: string, title = 'STL Segmenter'): Promise<boolean> {
+export async function nativeConfirm(message: string, title = 'Model Splitter'): Promise<boolean> {
   if (isTauri()) {
     const { ask } = await import('@tauri-apps/plugin-dialog');
     return ask(message, { title, kind: 'warning' });

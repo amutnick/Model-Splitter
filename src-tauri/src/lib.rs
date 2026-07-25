@@ -1,15 +1,14 @@
-//! Tauri v2 backend for the STL Segmenter desktop app.
+//! Tauri v2 backend for the Model Splitter desktop app.
 //!
-//! The heavy lifting (STL/OBJ/3MF parsing, CSG splitting, BSP planning, ZIP
+//! The heavy lifting (STL/OBJ parsing, CSG splitting, BSP planning, ZIP
 //! packaging) all happens in the WebView side because the algorithms already
 //! exist there in TypeScript and are fully deterministic. Rust's job on
 //! desktop is narrow but important:
 //!
-//!   1. Serve as a signed, sandboxed host with real OS integration.
+//!   1. Serve as a native host with operating-system integration.
 //!   2. Provide native open / save dialogs (via the `dialog` plugin).
-//!   3. Stream large mesh files off disk without shipping their bytes through
-//!      the JavaScript `File` API — this both avoids a full RAM copy in the
-//!      renderer and lets us accept files > 2 GB, which the WebView cannot.
+//!   3. Perform guarded filesystem I/O off the UI thread before transferring
+//!      model data to the WebView.
 //!
 //! All exposed commands are async so long-running I/O never blocks the UI
 //! thread, and every filesystem error is converted into a plain `String` so
@@ -28,9 +27,9 @@ pub struct FilePayload {
     pub bytes: Vec<u8>,
 }
 
-/// Hard ceiling so a runaway path (e.g. a symlink loop to /dev/zero) can never
-/// exhaust the renderer's heap. 512 MB comfortably covers even huge scans.
-const MAX_READ_BYTES: u64 = 512 * 1024 * 1024;
+/// Hard ceiling that prevents an unexpectedly large file from exhausting the
+/// renderer's heap during the IPC transfer.
+const MAX_READ_BYTES: u64 = 300 * 1024 * 1024;
 
 fn to_err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
@@ -45,13 +44,23 @@ fn filename_of(p: &Path) -> String {
 
 /// Read the full contents of a model file identified by absolute path.
 ///
-/// The path must have been produced by the OS file picker (which we surface
-/// through the `dialog` plugin), so it's already user-authorised — but the
-/// `fs` capability scope in `capabilities/default.json` is still the primary
-/// gate for what paths are reachable.
+/// The frontend obtains this path from the OS file picker. Validate the file
+/// type and size again at the command boundary before reading any data.
 #[tauri::command]
 async fn read_model_file(path: String) -> Result<FilePayload, String> {
     let p = PathBuf::from(&path);
+    let supported = p
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("stl")
+                || extension.eq_ignore_ascii_case("obj")
+                || extension.eq_ignore_ascii_case("mtl")
+        });
+    if !supported {
+        return Err("Only STL, OBJ, and MTL files are supported.".to_string());
+    }
+
     // Tauri re-exports its own async runtime so we don't need a direct tokio
     // dependency — `spawn_blocking` runs the blocking I/O off the UI thread.
     let p_meta = p.clone();
@@ -123,7 +132,6 @@ fn app_info() -> serde_json::Value {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             read_model_file,
             write_binary_file,

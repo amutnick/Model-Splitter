@@ -1,14 +1,13 @@
 [package]
-name = "stl-segmenter"
+name = "model-splitter"
 version = "0.1.0"
-description = "Topology-aware STL / OBJ / 3MF segmenter for multi-colour 3D printing."
-authors = ["you"]
+description = "Topology-aware STL and OBJ model splitter for multi-colour 3D printing."
+authors = ["Model Splitter contributors"]
 edition = "2021"
 rust-version = "1.77"
 
-# The lib is what Tauri v2's mobile entry point + desktop main both call into.
 [lib]
-name = "stl_segmenter_lib"
+name = "model_splitter_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -17,11 +16,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Smaller, faster release builds — matters for a bundled Mac .app.
 [profile.release]
 codegen-units = 1
 lto = true

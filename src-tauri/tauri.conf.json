@@ -1,21 +1,19 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "STL Segmenter",
+  "productName": "Model Splitter",
   "version": "0.1.0",
-  "identifier": "com.stlsegmenter.app",
-
+  "identifier": "com.modelsplitter.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build:web"
   },
-
   "app": {
     "windows": [
       {
         "label": "main",
-        "title": "STL Segmenter",
+        "title": "Model Splitter",
         "width": 1440,
         "height": 900,
         "minWidth": 960,
@@ -27,23 +25,21 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "acceptFirstMouse": true,
-        "fileDropEnabled": true,
+        "dragDropEnabled": true,
         "theme": "Dark"
       }
     ],
     "security": {
-      "csp": null,
-      "assetProtocol": {
-        "enable": true,
-        "scope": ["$HOME/**", "$DOCUMENT/**", "$DOWNLOAD/**", "$DESKTOP/**"]
-      }
+      "csp": null
     },
     "macOSPrivateApi": true
   },
-
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -52,12 +48,17 @@
       "icons/icon.ico"
     ],
     "category": "GraphicsAndDesign",
-    "shortDescription": "AI-powered STL segmenter for multi-colour 3D printing",
-    "longDescription": "Load STL / OBJ / 3MF meshes, let the topology-aware planner find optimal cut planes, and export watertight per-part STLs ready for AMS-style multi-colour 3D printing.",
-    "copyright": "© 2026",
+    "shortDescription": "Split STL and OBJ models for multi-colour 3D printing",
+    "longDescription": "Load STL or OBJ meshes, find topology-aware cut planes, and export watertight per-part STL files for multi-colour 3D printing.",
+    "copyright": "© 2026 Model Splitter contributors",
     "macOS": {
-      "minimumSystemVersion": "10.15",
-      "dmg": { "windowSize": { "width": 660, "height": 400 } },
+      "minimumSystemVersion": "11.3",
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
+      },
       "entitlements": null,
       "exceptionDomain": null,
       "signingIdentity": null,
@@ -65,25 +66,22 @@
     },
     "fileAssociations": [
       {
-        "ext": ["stl"],
+        "ext": [
+          "stl"
+        ],
         "name": "STL 3D Model",
         "description": "Stereolithography 3D model",
         "role": "Editor",
         "mimeType": "model/stl"
       },
       {
-        "ext": ["obj"],
+        "ext": [
+          "obj"
+        ],
         "name": "Wavefront OBJ",
         "description": "Wavefront OBJ 3D model",
         "role": "Editor",
         "mimeType": "model/obj"
-      },
-      {
-        "ext": ["3mf"],
-        "name": "3D Manufacturing Format",
-        "description": "3MF 3D model",
-        "role": "Editor",
-        "mimeType": "model/3mf"
       }
     ]
   }

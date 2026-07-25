@@ -247,7 +247,7 @@ export default function App() {
         title: 'Open 3D model',
         multiple: true,
         filters: [
-          { name: '3D Models', extensions: ['stl', 'obj', '3mf', 'mtl'] },
+          { name: '3D Models', extensions: ['stl', 'obj', 'mtl'] },
           { name: 'STL', extensions: ['stl'] },
           { name: 'OBJ (+ MTL)', extensions: ['obj', 'mtl'] },
         ],
