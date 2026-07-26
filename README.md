@@ -1,6 +1,6 @@
 # Model Splitter
 
-A local-first STL and OBJ feature slicer for multi-colour 3D printing. Model Splitter analyzes mesh geometry, proposes cut planes, previews the resulting parts in 3D, and exports watertight STL files in a ZIP archive.
+A local-first STL, OBJ, and 3MF feature slicer for multi-colour 3D printing. Model Splitter analyzes mesh geometry, repairs simple open boundaries on request, proposes solid cut planes, adds optional alignment pegs, previews the resulting parts in 3D, and exports STL files in a ZIP archive.
 
 The same React application runs in a browser or inside the included Tauri desktop host. Model geometry stays on the local machine.
 
@@ -9,8 +9,15 @@ New users can follow the illustrated [Get, Install, and Run guide](INSTALL_GUIDE
 ## Supported input
 
 - Binary and ASCII STL
-- Wavefront OBJ
-- Optional MTL files supplied alongside an OBJ
+- Wavefront OBJ with optional MTL files
+- 3MF Core mesh packages, including build assemblies, transforms, units, base materials, and colour groups
+
+## Geometry preparation
+
+- Loaded meshes are checked for boundary, non-manifold, and inconsistent edges.
+- **Repair open mesh** can fill simple boundary loops before slicing and validates the result.
+- Every successful planar cut is capped on both parts.
+- Individual cuts can receive automatically placed cylindrical guide pegs and matching clearance sockets.
 
 ## Web quick start
 
@@ -60,6 +67,7 @@ npm run tauri:build
 | --- | --- |
 | `npm run dev` | Start the browser development server |
 | `npm run typecheck` | Run strict TypeScript validation |
+| `npm test` | Run 3MF, mesh-repair, and connector geometry tests |
 | `npm run build` | Type-check and create the web production bundle |
 | `npm run build:web` | Explicit alias for the web production build |
 | `npm run preview` | Preview the generated web bundle |

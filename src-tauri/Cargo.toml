@@ -1,7 +1,7 @@
 [package]
 name = "model-splitter"
 version = "0.1.0"
-description = "Topology-aware STL and OBJ model splitter for multi-colour 3D printing."
+description = "Topology-aware STL, OBJ, and 3MF model splitter with solid repair and alignment connectors."
 authors = ["Model Splitter contributors"]
 edition = "2021"
 rust-version = "1.77"

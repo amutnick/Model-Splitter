@@ -57,7 +57,7 @@ export interface LoadedFile {
 export interface OpenDialogOptions {
   title?: string;
   multiple?: boolean;
-  /** e.g. `[{ name: '3D Models', extensions: ['stl', 'obj', 'mtl'] }]` */
+  /** e.g. `[{ name: '3D Models', extensions: ['stl', 'obj', 'mtl', '3mf'] }]` */
   filters?: { name: string; extensions: string[] }[];
 }
 
@@ -82,9 +82,10 @@ export interface SaveDialogOptions {
  */
 export async function openFileDialog(opts: OpenDialogOptions = {}): Promise<LoadedFile[]> {
   const filters = opts.filters ?? [
-    { name: '3D Models', extensions: ['stl', 'obj', 'mtl'] },
+    { name: '3D Models', extensions: ['stl', 'obj', 'mtl', '3mf'] },
     { name: 'STL', extensions: ['stl'] },
     { name: 'OBJ (+ MTL)', extensions: ['obj', 'mtl'] },
+    { name: '3MF', extensions: ['3mf'] },
   ];
 
   if (isTauri()) {

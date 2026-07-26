@@ -1,0 +1,5 @@
+# Keep generated documents and image assets out of textual diffs.
+*.pdf binary
+*.png binary
+*.ico binary
+*.icns binary

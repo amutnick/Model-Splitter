@@ -25,7 +25,7 @@
     <path d="M87 120 h40 l14 15 v46 H87 z" fill="#0ea5e9" opacity="0.25" stroke="#7dd3fc" stroke-width="3"/>
     <path d="M127 120 v16 h14" fill="none" stroke="#7dd3fc" stroke-width="3"/>
     <text x="130" y="211" text-anchor="middle" fill="#f8fafc" font-family="system-ui, sans-serif" font-size="19" font-weight="700">1. Open</text>
-    <text x="130" y="237" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="13">STL or OBJ + MTL</text>
+    <text x="130" y="237" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="13">STL · OBJ · 3MF</text>
   </g>
 
   <g filter="url(#shadow)">

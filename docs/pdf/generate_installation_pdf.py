@@ -482,7 +482,7 @@ def draw_cover(canvas, doc) -> None:
     canvas.setTitle("Model Splitter — Illustrated Installation Guide")
     canvas.setAuthor("Model Splitter contributors")
     canvas.setSubject("How to get, install, run, and update Model Splitter")
-    canvas.setKeywords("Model Splitter, STL, OBJ, installation, Tauri, macOS")
+    canvas.setKeywords("Model Splitter, STL, OBJ, 3MF, installation, Tauri, macOS")
 
     canvas.setFillColor(NAVY_DARK)
     canvas.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
@@ -782,23 +782,24 @@ def build_story() -> list:
     left_steps = numbered_list(
         [
             "Select <b>Browse Files</b> or drop a model into the window.",
-            "Inspect the model in the 3D viewport.",
+            "Inspect the model and its solid/open status.",
+            "Enable <b>Repair open mesh</b> if simple boundary holes need filling.",
             "Choose a segmentation strategy and adjust its options.",
-            "Select <b>Slice Model</b>.",
         ]
     )
     right_steps = numbered_list(
         [
-            "Review the generated parts and cut planes.",
-            "Adjust cuts if needed.",
+            "Select <b>Slice Model</b>.",
+            "Enable <b>PEG</b> on selected cuts that need guide connectors.",
+            "Review the generated parts, sockets, and cut planes.",
             "Select <b>Download .ZIP</b> to export segmented STL files.",
         ]
     )
     story += [columns([left_steps], [right_steps]), Spacer(1, 8), h3("Supported input")]
     file_cards = [
         card([badge("STL", BLUE), Spacer(1, 5), p("Binary or ASCII", "card_body")], CYAN),
-        card([badge("OBJ", PURPLE), Spacer(1, 5), p("Wavefront mesh", "card_body")], PURPLE),
-        card([badge("MTL", ORANGE), Spacer(1, 5), p("Optional with OBJ", "card_body")], ORANGE),
+        card([badge("OBJ + MTL", PURPLE), Spacer(1, 5), p("Wavefront mesh", "card_body")], PURPLE),
+        card([badge("3MF", ORANGE), Spacer(1, 5), p("Assemblies + colours", "card_body")], ORANGE),
     ]
     third = (CONTENT_W - 16) / 3
     file_table = Table([[file_cards[0], "", file_cards[1], "", file_cards[2]]], colWidths=[third, 8, third, 8, third])
@@ -921,7 +922,7 @@ def build_story() -> list:
                     f"{inline_code('node --version')} and {inline_code('npm --version')} work.",
                     f"{inline_code('npm ci')} completes without an error.",
                     "Browser mode opens localhost:5173—or native prerequisites are installed.",
-                    "An STL or OBJ model is ready to load.",
+                    "An STL, OBJ, or 3MF model is ready to load.",
                 ],
                 "card_body",
                 GREEN,
@@ -936,7 +937,7 @@ def build_story() -> list:
             "info",
         )
     )
-    story += [Spacer(1, 15), p("Model Splitter · local-first STL and OBJ feature slicing for multi-colour 3D printing", "center_small")]
+    story += [Spacer(1, 15), p("Model Splitter · local-first STL, OBJ, and 3MF feature slicing for multi-colour 3D printing", "center_small")]
     return story
 
 

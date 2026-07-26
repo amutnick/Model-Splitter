@@ -36,8 +36,16 @@ export default defineConfig(() => {
       target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari14.1",
       minify: process.env.TAURI_ENV_DEBUG ? false : ("esbuild" as const),
       sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),
-      // Three.js and the mesh algorithms intentionally ship together.
-      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('/node_modules/three/')) return 'three';
+            if (id.includes('/node_modules/jszip/') || id.includes('/node_modules/@xmldom/')) return 'model-formats';
+            if (id.includes('/node_modules/react/') || id.includes('/node_modules/react-dom/')) return 'react';
+          },
+        },
+      },
+      chunkSizeWarningLimit: 750,
     },
   };
 });

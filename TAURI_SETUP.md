@@ -69,7 +69,7 @@ The frontend uses `src/utils/tauriBridge.ts` to select browser or native behavio
 
 | Command | Purpose |
 | --- | --- |
-| `read_model_file` | Read a picker-selected STL, OBJ, or MTL file with type and size checks |
+| `read_model_file` | Read a picker-selected STL, OBJ, MTL, or 3MF file with type and size checks |
 | `write_binary_file` | Save an exported binary payload off the UI thread |
 | `app_info` | Confirm the native IPC connection and return build information |
 

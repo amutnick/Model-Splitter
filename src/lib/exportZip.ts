@@ -43,7 +43,7 @@ function applyOffset(mesh: MeshData, o?: [number, number, number]): MeshData {
 }
 
 const sanitize = (s: string) =>
-  s.replace(/\.(stl|obj)$/i, '').replace(/[^a-z0-9_\-]+/gi, '_').slice(0, 60) || 'model';
+  s.replace(/\.(stl|obj|3mf)$/i, '').replace(/[^a-z0-9_\-]+/gi, '_').slice(0, 60) || 'model';
 
 export async function exportSegmentsZip(
   parts: ExportPart[],
@@ -98,9 +98,9 @@ export async function exportSegmentsZip(
       '  3. Assign one filament slot per part using the colours listed above.',
       '',
       'Without an AMS:',
-      '  1. Import parts one at a time and lay each new flat cap face on the bed',
-      '     (every cut face is planar, so "Place on face" gives zero-support prints).',
-      '  2. Print each part in its own filament, then glue the assembly together.',
+      '  1. Import parts one at a time. Plain cut faces can be placed directly on the bed.',
+      '     Parts with guide pegs may need a different orientation or limited supports.',
+      '  2. Print each part in its own filament, test-fit peg/socket clearances, then assemble.',
     );
     folder.file('MANIFEST.txt', manifest.join('\n'));
   }

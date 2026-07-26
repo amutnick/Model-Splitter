@@ -1,6 +1,6 @@
 //! Tauri v2 backend for the Model Splitter desktop app.
 //!
-//! The heavy lifting (STL/OBJ parsing, CSG splitting, BSP planning, ZIP
+//! The heavy lifting (STL/OBJ/3MF parsing, CSG splitting, BSP planning, ZIP
 //! packaging) all happens in the WebView side because the algorithms already
 //! exist there in TypeScript and are fully deterministic. Rust's job on
 //! desktop is narrow but important:
@@ -56,9 +56,10 @@ async fn read_model_file(path: String) -> Result<FilePayload, String> {
             extension.eq_ignore_ascii_case("stl")
                 || extension.eq_ignore_ascii_case("obj")
                 || extension.eq_ignore_ascii_case("mtl")
+                || extension.eq_ignore_ascii_case("3mf")
         });
     if !supported {
-        return Err("Only STL, OBJ, and MTL files are supported.".to_string());
+        return Err("Only STL, OBJ, MTL, and 3MF files are supported.".to_string());
     }
 
     // Tauri re-exports its own async runtime so we don't need a direct tokio

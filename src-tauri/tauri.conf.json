@@ -48,8 +48,8 @@
       "icons/icon.ico"
     ],
     "category": "GraphicsAndDesign",
-    "shortDescription": "Split STL and OBJ models for multi-colour 3D printing",
-    "longDescription": "Load STL or OBJ meshes, find topology-aware cut planes, and export watertight per-part STL files for multi-colour 3D printing.",
+    "shortDescription": "Split STL, OBJ, and 3MF models for multi-colour 3D printing",
+    "longDescription": "Load STL, OBJ, or 3MF meshes, repair open boundaries, add topology-aware cut planes and alignment connectors, and export watertight per-part STL files.",
     "copyright": "© 2026 Model Splitter contributors",
     "macOS": {
       "minimumSystemVersion": "11.3",
@@ -82,6 +82,15 @@
         "description": "Wavefront OBJ 3D model",
         "role": "Editor",
         "mimeType": "model/obj"
+      },
+      {
+        "ext": [
+          "3mf"
+        ],
+        "name": "3D Manufacturing Format",
+        "description": "3MF manufacturing model",
+        "role": "Editor",
+        "mimeType": "model/3mf"
       }
     ]
   }

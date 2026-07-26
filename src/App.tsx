@@ -6,9 +6,10 @@ import CutList from './components/CutList';
 import type { ViewportEngine, PlaneSpec } from './three/engine';
 import type { MeshData } from './lib/stlIO';
 import { computeBounds, signedVolume, type Bounds } from './lib/meshUtils';
+import { analyzeMeshTopology } from './lib/meshRepair';
 import {
   runSegmentation, reapplyPlan, flattenSplits, removeSplit, updateSplit,
-  replaceLeaf, planLeafSplit, executePlan, profileAxis, bestCut,
+  replaceLeaf, planLeafSplit, executePlan, prepareMeshForSlicing, profileAxis, bestCut,
   DEFAULT_OPTIONS, AXIS_NAME,
   type PlanNode, type PlannerOptions, type Segment,
   type SegmentMode, type AxisOption, type AxisProfile,
@@ -153,6 +154,10 @@ export default function App() {
   }, [mesh]);
 
   const splits = useMemo(() => (root ? flattenSplits(root) : []), [root]);
+  const selectedSplit = useMemo(
+    () => splits.find((split) => split.id === selectedCut) ?? null,
+    [splits, selectedCut],
+  );
 
   /**
    * Offsets of cuts currently being dragged. Kept OUT of `root` so that moving
@@ -247,9 +252,10 @@ export default function App() {
         title: 'Open 3D model',
         multiple: true,
         filters: [
-          { name: '3D Models', extensions: ['stl', 'obj', 'mtl'] },
+          { name: '3D Models', extensions: ['stl', 'obj', 'mtl', '3mf'] },
           { name: 'STL', extensions: ['stl'] },
           { name: 'OBJ (+ MTL)', extensions: ['obj', 'mtl'] },
+          { name: '3MF', extensions: ['3mf'] },
         ],
       });
       if (!loaded.length) return;
@@ -270,6 +276,7 @@ export default function App() {
         materials: [],
         hasVertexColors: kind === 'creature',
         usedMtl: false,
+        topology: analyzeMeshTopology(m),
         notes: kind === 'creature'
           ? ['Colour-authored demo: skin / hair / eyes / teeth / cloth / base.']
           : ['Uncoloured demo — pure geometric feature analysis.'],
@@ -325,11 +332,11 @@ export default function App() {
   }, [mesh, opts, busy]);
 
   /** Cheap geometry-only re-run after a cut is moved / muted / deleted. */
-  const reapply = useCallback((nextRoot: PlanNode) => {
+  const reapply = useCallback((nextRoot: PlanNode, nextOpts: PlannerOptions = opts) => {
     if (!mesh) return;
     setRoot(nextRoot);
     try {
-      const r = reapplyPlan(mesh, nextRoot, opts);
+      const r = reapplyPlan(mesh, nextRoot, nextOpts);
       setSegments(r.segments);
       setNodeBounds(r.nodeBounds);
       setWarnings(r.warnings);
@@ -341,6 +348,12 @@ export default function App() {
       setError(`Re-slice failed: ${(err as Error).message}`);
     }
   }, [mesh, opts]);
+
+  const updateGeometryOptions = useCallback((patch: Partial<PlannerOptions>) => {
+    const next = { ...opts, ...patch };
+    setOpts(next);
+    if (root) reapply(root, next);
+  }, [opts, root, reapply]);
 
   /* ---------------- cut editing ---------------- */
 
@@ -366,6 +379,11 @@ export default function App() {
     reapply(updateSplit(root, id, { enabled }));
   }, [root, reapply]);
 
+  const handleConnectorToggle = useCallback((id: string, enabled: boolean) => {
+    if (!root) return;
+    reapply(updateSplit(root, id, { connectors: enabled }));
+  }, [root, reapply]);
+
   const handleCutDelete = useCallback((id: string) => {
     if (!root) return;
     if (selectedCut === id) setSelectedCut(null);
@@ -376,9 +394,10 @@ export default function App() {
   const handleSplitPart = useCallback((seg: Segment) => {
     if (!mesh || !root) return;
     try {
-      const bounds = computeBounds(mesh);
+      const prepared = prepareMeshForSlicing(mesh, opts);
+      const bounds = computeBounds(prepared.mesh);
       const eps = (Math.hypot(...bounds.size) || 1) * 2e-6;
-      const exec = executePlan(mesh, root, eps);
+      const exec = executePlan(prepared.mesh, root, eps, opts);
       // Loose-shell separation appends "_sN" to a leaf id — cut the parent leaf.
       const baseId = seg.leafId.replace(/_s\d+$/, '');
       const piece = exec.pieces.find((p) => p.leafId === baseId);
@@ -484,7 +503,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 text-sm font-black text-white">⬒</div>
           <div>
-            <h1 className="text-sm font-semibold leading-tight text-white">STL / OBJ Model Segmenter</h1>
+            <h1 className="text-sm font-semibold leading-tight text-white">STL / OBJ / 3MF Model Splitter</h1>
             <p className="text-[10px] leading-tight text-slate-500">Multi-axis, colour-aware splitting for multi-colour 3D printing</p>
           </div>
         </div>
@@ -549,7 +568,21 @@ export default function App() {
                 <Stat label="Height Z" value={stats.size[2].toFixed(1)} />
               </div>
             )}
-            {model && model.materials.length > 1 && (
+            {model && (
+              <div className={`mt-2 rounded-lg px-2.5 py-2 text-[10px] ring-1 ${
+                model.topology.isSolid
+                  ? 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/25'
+                  : 'bg-amber-500/10 text-amber-200 ring-amber-500/30'
+              }`}>
+                <b>{model.topology.isSolid ? '● Solid / watertight' : '⚠ Open / non-solid'}</b>
+                {!model.topology.isSolid && (
+                  <span className="ml-1 text-amber-300/80">
+                    · {model.topology.boundaryEdges} boundary · {model.topology.nonManifoldEdges} non-manifold edges
+                  </span>
+                )}
+              </div>
+            )}
+            {model && model.materials.length > 0 && (
               <div className="mt-3">
                 <p className="mb-1.5 text-[10px] uppercase tracking-wide text-slate-500">
                   Source materials ({model.materials.length})
@@ -580,7 +613,7 @@ export default function App() {
                   onChange={(mode) => setOpts((o) => ({ ...o, mode }))}
                   options={[
                     { value: 'auto', label: 'Auto', hint: 'Recursive multi-axis feature analysis' },
-                    { value: 'color', label: 'Colour', hint: hasColor ? 'Split by colour regions (no cutting)' : 'Requires an OBJ with colours', disabled: !hasColor },
+                    { value: 'color', label: 'Colour', hint: hasColor ? 'Split by colour regions (no cutting)' : 'Requires 3MF/OBJ material or vertex colours', disabled: !hasColor },
                     { value: 'uniform', label: 'Even', hint: 'Recursive even bisection' },
                     { value: 'components', label: 'Shells', hint: 'Split disconnected shells' },
                   ]}
@@ -646,6 +679,47 @@ export default function App() {
                 ↺ Reset cuts
               </button>
             )}
+          </Section>
+
+          <Section title="Solid & assembly">
+            <div className="space-y-3">
+              <Toggle
+                checked={opts.repairOpenMeshes}
+                label="Repair open mesh before slicing"
+                hint="Fill simple boundary loops, then validate every resulting part"
+                onChange={(repairOpenMeshes) => updateGeometryOptions({ repairOpenMeshes })}
+              />
+              {model && !model.topology.isSolid && !opts.repairOpenMeshes && (
+                <p className="rounded-md bg-amber-500/10 px-2 py-1.5 text-[10px] leading-relaxed text-amber-200 ring-1 ring-amber-500/20">
+                  This input is open. Enable repair to fill simple holes before cut caps are generated.
+                </p>
+              )}
+
+              <div className="border-t border-white/[0.07] pt-3">
+                <Toggle
+                  checked={!!selectedSplit?.connectors}
+                  label={selectedSplit ? 'Guide pegs on selected cut' : 'Select a cut to add guide pegs'}
+                  hint="Adds cylindrical pegs to one side and clearance sockets to the matching side"
+                  onChange={(enabled) => { if (selectedSplit) handleConnectorToggle(selectedSplit.id, enabled); }}
+                />
+                <p className="mb-3 mt-1 text-[10px] leading-relaxed text-slate-500">
+                  Enable PEG on individual rows in the Cuts tab. Placement is automatic and stays inside the cut face.
+                </p>
+                <div className="space-y-3">
+                  <Slider label="Pegs per cut" value={opts.connectorCount} min={1} max={4} step={1}
+                    onChange={(connectorCount) => updateGeometryOptions({ connectorCount })} />
+                  <Slider label="Peg diameter" value={opts.connectorDiameter} min={1} max={12} step={0.25}
+                    format={(value) => `${value.toFixed(2)} mm`}
+                    onChange={(connectorDiameter) => updateGeometryOptions({ connectorDiameter })} />
+                  <Slider label="Peg depth" value={opts.connectorDepth} min={1} max={10} step={0.25}
+                    format={(value) => `${value.toFixed(2)} mm`}
+                    onChange={(connectorDepth) => updateGeometryOptions({ connectorDepth })} />
+                  <Slider label="Socket clearance" value={opts.connectorClearance} min={0.05} max={0.8} step={0.05}
+                    format={(value) => `${value.toFixed(2)} mm radial`}
+                    onChange={(connectorClearance) => updateGeometryOptions({ connectorClearance })} />
+                </div>
+              </div>
+            </div>
           </Section>
 
           {previewProfile && (
@@ -768,6 +842,7 @@ export default function App() {
                 onSelect={setSelectedCut}
                 onMove={handleCutMove}
                 onToggle={handleCutToggle}
+                onToggleConnectors={handleConnectorToggle}
                 onDelete={handleCutDelete}
               />
             </Section>
@@ -837,7 +912,7 @@ export default function App() {
             )}
             {segments.length > 0 && (
               <div className="mt-3 rounded-lg bg-black/30 p-2.5 font-mono text-[10px] leading-relaxed text-slate-500 ring-1 ring-white/[0.06]">
-                {(model?.name || 'model').replace(/\.(stl|obj)$/i, '')}_segmented.zip
+                {(model?.name || 'model').replace(/\.(stl|obj|3mf)$/i, '')}_segmented.zip
                 <br />└ {segments.length} × .stl · {fmt(totalTris)} tris · MANIFEST.txt
               </div>
             )}
@@ -846,8 +921,9 @@ export default function App() {
           <Section title="How the planner thinks">
             <ul className="space-y-2 text-[11px] leading-relaxed text-slate-400">
               <li><b className="text-slate-300">Recursive:</b> each sub-piece is re-analysed on X, Y and Z, so a head separates on Z and then a snout on Y.</li>
-              <li><b className="text-slate-300">Colour-aware:</b> OBJ vertex/MTL colours pull seams onto hair, eye and skin boundaries.</li>
-              <li><b className="text-slate-300">Print-ready:</b> seams prefer necks, flat faces and low-overhang regions; every cut is capped watertight.</li>
+              <li><b className="text-slate-300">Colour-aware:</b> 3MF and OBJ/MTL colours pull seams onto material boundaries.</li>
+              <li><b className="text-slate-300">Solid-aware:</b> open inputs are diagnosed and can be repaired before watertight cut caps are created.</li>
+              <li><b className="text-slate-300">Assembly-ready:</b> selected cuts can receive automatic guide pegs with clearance sockets.</li>
               <li><b className="text-slate-300">Editable:</b> drag any plane, mute it, delete it, or split a part again.</li>
             </ul>
           </Section>

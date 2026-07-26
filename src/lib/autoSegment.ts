@@ -24,7 +24,8 @@ import {
   computeBounds, splitConnectedComponents, signedVolume, centroid,
   extractTriangles, meanColor, rgbToHex, type Bounds,
 } from './meshUtils';
-import { slicePlane, type CutPlane } from './slicePlane';
+import { analyzeMeshTopology, repairBoundaryHoles, type MeshTopology } from './meshRepair';
+import { slicePlane, type ConnectorOptions, type CutPlane } from './slicePlane';
 
 export type Axis = 0 | 1 | 2;
 export type AxisOption = 'auto' | 'x' | 'y' | 'z';
@@ -46,6 +47,13 @@ export interface PlannerOptions {
   multiAxis: boolean;
   /** Weight of colour-boundary evidence when the mesh has colours. */
   colorWeight: number;
+  /** Opt-in repair of simple boundary holes before planning and slicing. */
+  repairOpenMeshes: boolean;
+  /** Shared dimensions for per-cut cylindrical peg/socket connectors. */
+  connectorCount: number;
+  connectorDiameter: number;
+  connectorDepth: number;
+  connectorClearance: number;
 }
 
 export const DEFAULT_OPTIONS: PlannerOptions = {
@@ -57,6 +65,11 @@ export const DEFAULT_OPTIONS: PlannerOptions = {
   separateLooseParts: true,
   multiAxis: true,
   colorWeight: 0.7,
+  repairOpenMeshes: false,
+  connectorCount: 2,
+  connectorDiameter: 4,
+  connectorDepth: 3,
+  connectorClearance: 0.25,
 };
 
 /* ------------------------------------------------------------------ */
@@ -74,6 +87,8 @@ export interface PlanSplit {
   axis: Axis;
   offset: number;
   enabled: boolean;
+  /** Add automatically placed guide pegs and matching sockets to this cut. */
+  connectors: boolean;
   /** 0..1, higher is a better seam. */
   quality: number;
   /** Human-readable justification shown in the cut list. */
@@ -123,6 +138,45 @@ export function replaceLeaf(node: PlanNode, leafId: string, replacement: PlanNod
   if (node.kind === 'leaf') return node.id === leafId ? replacement : node;
   if (node.id === leafId) return replacement;
   return { ...node, a: replaceLeaf(node.a, leafId, replacement), b: replaceLeaf(node.b, leafId, replacement) };
+}
+
+export interface PreparedMesh {
+  mesh: MeshData;
+  topology: MeshTopology;
+  warnings: string[];
+  notes: string[];
+}
+
+/** Diagnose an input and optionally close simple boundary loops before cuts. */
+export function prepareMeshForSlicing(mesh: MeshData, opts: PlannerOptions): PreparedMesh {
+  const before = analyzeMeshTopology(mesh);
+  const warnings: string[] = [];
+  const notes: string[] = [];
+  if (before.isSolid) {
+    return { mesh, topology: before, warnings, notes };
+  }
+
+  if (!opts.repairOpenMeshes) {
+    warnings.push(
+      `Input is not solid (${before.boundaryEdges} boundary, ${before.nonManifoldEdges} non-manifold edge(s)). Enable “Repair open mesh” before slicing.`,
+    );
+    return { mesh, topology: before, warnings, notes };
+  }
+
+  const repair = repairBoundaryHoles(mesh);
+  if (repair.repairedLoops) {
+    notes.push(
+      `Solid repair filled ${repair.repairedLoops} boundary loop(s) with ${repair.addedTriangles} triangle(s).`,
+    );
+  }
+  if (repair.after.isSolid) {
+    notes.push('Repaired mesh validated as watertight before slicing.');
+  } else {
+    warnings.push(
+      `Repair was incomplete: ${repair.after.boundaryEdges} boundary, ${repair.after.nonManifoldEdges} non-manifold and ${repair.after.inconsistentEdges} inconsistent edge(s) remain.`,
+    );
+  }
+  return { mesh: repair.mesh, topology: repair.after, warnings, notes };
 }
 
 /* ------------------------------------------------------------------ */
@@ -388,11 +442,22 @@ export interface ExecResult {
   /** Bounds of the mesh arriving at each node — drives plane quads + sliders. */
   nodeBounds: Map<string, Bounds>;
   warnings: string[];
+  connectorPairs: number;
 }
 
-export function executePlan(mesh: MeshData, root: PlanNode, eps: number): ExecResult {
+function connectorOptions(opts: PlannerOptions): ConnectorOptions {
+  return {
+    count: opts.connectorCount,
+    diameter: opts.connectorDiameter,
+    depth: opts.connectorDepth,
+    clearance: opts.connectorClearance,
+  };
+}
+
+export function executePlan(mesh: MeshData, root: PlanNode, eps: number, opts?: PlannerOptions): ExecResult {
   const nodeBounds = new Map<string, Bounds>();
   const warnings: string[] = [];
+  let connectorPairs = 0;
 
   /** Record bounds for a whole subtree without slicing (muted cuts). */
   const recordBounds = (m: MeshData, node: PlanNode) => {
@@ -415,7 +480,8 @@ export function executePlan(mesh: MeshData, root: PlanNode, eps: number): ExecRe
     normal[node.axis] = 1;
     const plane: CutPlane = { normal, constant: node.offset };
     try {
-      const r = slicePlane(m, plane, eps);
+      const requestedConnectors = node.connectors && opts ? connectorOptions(opts) : undefined;
+      const r = slicePlane(m, plane, eps, requestedConnectors);
       // The user may have dragged the plane clear of the geometry — then the
       // cut is a no-op and everything continues down the surviving branch.
       if (!r.positive && !r.negative) return [{ leafId: node.id, mesh: m }];
@@ -423,6 +489,14 @@ export function executePlan(mesh: MeshData, root: PlanNode, eps: number): ExecRe
       if (!r.negative) { recordBounds(m, node.a); return walk(r.positive, node.b); }
 
       if (!r.manifold) warnings.push(`Cut ${node.id}: open boundary — cap may be imperfect.`);
+      if (requestedConnectors) {
+        connectorPairs += r.connectorCount;
+        if (r.connectorCount < requestedConnectors.count) {
+          warnings.push(
+            `Cut ${node.id}: placed ${r.connectorCount}/${requestedConnectors.count} connector(s); the cut face is too small for more.`,
+          );
+        }
+      }
       return [...walk(r.negative, node.a), ...walk(r.positive, node.b)];
     } catch (e) {
       warnings.push(`Cut ${node.id} failed: ${(e as Error).message}`);
@@ -430,7 +504,8 @@ export function executePlan(mesh: MeshData, root: PlanNode, eps: number): ExecRe
     }
   };
 
-  return { pieces: walk(mesh, root), nodeBounds, warnings };
+  const pieces = walk(mesh, root);
+  return { pieces, nodeBounds, warnings, connectorPairs };
 }
 
 /* ------------------------------------------------------------------ */
@@ -560,6 +635,18 @@ function buildSegments(
   return { segments, dropped };
 }
 
+function appendSolidityWarnings(segments: Segment[], warnings: string[]) {
+  const open = segments
+    .map((segment) => ({ segment, topology: analyzeMeshTopology(segment.mesh) }))
+    .filter(({ topology }) => !topology.isSolid);
+  for (const { segment, topology } of open.slice(0, 4)) {
+    warnings.push(
+      `${segment.name} is not solid (${topology.boundaryEdges} boundary, ${topology.nonManifoldEdges} non-manifold edge(s)).`,
+    );
+  }
+  if (open.length > 4) warnings.push(`${open.length - 4} additional non-solid part(s) detected.`);
+}
+
 /* ------------------------------------------------------------------ */
 /* Main entry: plan + execute                                          */
 /* ------------------------------------------------------------------ */
@@ -570,8 +657,10 @@ export async function runSegmentation(
   onProgress?: (pct: number, label: string) => void,
 ): Promise<SegmentationResult> {
   const start = performance.now();
-  const warnings: string[] = [];
-  const notes: string[] = [];
+  const prepared = prepareMeshForSlicing(mesh, opts);
+  mesh = prepared.mesh;
+  const warnings: string[] = [...prepared.warnings];
+  const notes: string[] = [...prepared.notes];
   const bounds = computeBounds(mesh);
   const eps = (Math.hypot(...bounds.size) || 1) * 2e-6;
 
@@ -580,7 +669,7 @@ export async function runSegmentation(
     onProgress?.(20, 'Clustering colour regions…');
     await tick();
     if (!mesh.colors) {
-      throw new Error('This model has no colour data. Load an OBJ with vertex colours or an MTL.');
+      throw new Error('This model has no colour data. Load a colour-authored 3MF or an OBJ with vertex colours/MTL.');
     }
     let regions = segmentByColor(mesh, Math.max(2, opts.parts));
     notes.push(`${regions.length} colour region(s) detected`);
@@ -599,6 +688,7 @@ export async function runSegmentation(
     const pieces: LeafPiece[] = regions.map((r, i) => ({ leafId: `color${i}`, mesh: r.mesh }));
     const { segments, dropped } = buildSegments(pieces, true, regions.map((r) => r.color));
     if (dropped) warnings.push(`${dropped} negligible fragment(s) discarded.`);
+    appendSolidityWarnings(segments, warnings);
     onProgress?.(100, 'Done');
     return {
       segments, root: { kind: 'leaf', id: 'root' }, nodeBounds: new Map(),
@@ -615,6 +705,7 @@ export async function runSegmentation(
     const pieces: LeafPiece[] = shells.map((m, i) => ({ leafId: `shell${i}`, mesh: m }));
     const { segments, dropped } = buildSegments(pieces, false);
     if (dropped) warnings.push(`${dropped} negligible shell(s) discarded.`);
+    appendSolidityWarnings(segments, warnings);
     onProgress?.(100, 'Done');
     return {
       segments, root: { kind: 'leaf', id: 'root' }, nodeBounds: new Map(),
@@ -707,6 +798,7 @@ export async function runSegmentation(
       axis: cand.axis,
       offset: cand.offset,
       enabled: true,
+      connectors: false,
       quality: cand.quality,
       reason: cand.reason,
       range: cand.range,
@@ -751,6 +843,7 @@ export async function runSegmentation(
 
   const { segments, dropped } = buildSegments(pieces, false);
   if (dropped) warnings.push(`${dropped} negligible fragment(s) discarded (<0.03% volume).`);
+  appendSolidityWarnings(segments, warnings);
 
   const splits = flattenSplits(root);
   const axes = new Set(splits.map((s) => s.axis));
@@ -759,7 +852,7 @@ export async function runSegmentation(
   );
   if (mesh.colors) notes.push('Colour boundaries factored into seam placement');
 
-  const nodeBounds = executePlan(mesh, root, eps).nodeBounds;
+  const nodeBounds = executePlan(mesh, root, eps, opts).nodeBounds;
 
   onProgress?.(100, 'Done');
   return { segments, root, nodeBounds, warnings, notes, elapsedMs: performance.now() - start };
@@ -793,9 +886,11 @@ export function reapplyPlan(
   opts: PlannerOptions,
 ): SegmentationResult {
   const start = performance.now();
+  const prepared = prepareMeshForSlicing(mesh, opts);
+  mesh = prepared.mesh;
   const bounds = computeBounds(mesh);
   const eps = (Math.hypot(...bounds.size) || 1) * 2e-6;
-  const exec = executePlan(mesh, root, eps);
+  const exec = executePlan(mesh, root, eps, opts);
 
   let pieces = exec.pieces;
   if (opts.separateLooseParts) {
@@ -809,16 +904,19 @@ export function reapplyPlan(
   }
 
   const { segments, dropped } = buildSegments(pieces, false);
-  const warnings = [...exec.warnings];
+  const warnings = [...prepared.warnings, ...exec.warnings];
   if (dropped) warnings.push(`${dropped} negligible fragment(s) discarded.`);
+  appendSolidityWarnings(segments, warnings);
 
   const splits = flattenSplits(root);
+  const notes = [...prepared.notes, `${splits.filter((s) => s.enabled).length} active cut(s) applied`];
+  if (exec.connectorPairs) notes.push(`${exec.connectorPairs} guide peg/socket pair(s) generated.`);
   return {
     segments,
     root,
     nodeBounds: exec.nodeBounds,
     warnings,
-    notes: [`${splits.filter((s) => s.enabled).length} active cut(s) applied`],
+    notes,
     elapsedMs: performance.now() - start,
   };
 }
@@ -833,6 +931,7 @@ export function planLeafSplit(leafMesh: MeshData, opts: PlannerOptions, depth: n
     axis: cand.axis,
     offset: cand.offset,
     enabled: true,
+    connectors: false,
     quality: cand.quality,
     reason: cand.reason,
     range: cand.range,

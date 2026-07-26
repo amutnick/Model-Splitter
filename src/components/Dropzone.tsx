@@ -6,7 +6,7 @@ interface Props {
   disabled?: boolean;
 }
 
-const ACCEPT = /\.(stl|obj|mtl)$/i;
+const ACCEPT = /\.(stl|obj|mtl|3mf)$/i;
 
 export default function Dropzone({ onFiles, compact, disabled }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -19,10 +19,10 @@ export default function Dropzone({ onFiles, compact, disabled }: Props) {
       if (!list || !list.length) return;
       const files = Array.from(list).filter((f) => ACCEPT.test(f.name));
       if (!files.length) {
-        setErr('Only .stl and .obj (plus an optional .mtl) files are supported.');
+        setErr('Only .stl, .obj (+ optional .mtl), and .3mf files are supported.');
         return;
       }
-      if (!files.some((f) => /\.(stl|obj)$/i.test(f.name))) {
+      if (!files.some((f) => /\.(stl|obj|3mf)$/i.test(f.name))) {
         setErr('Drop the .obj together with its .mtl — an .mtl alone has no geometry.');
         return;
       }
@@ -50,7 +50,7 @@ export default function Dropzone({ onFiles, compact, disabled }: Props) {
       ref={inputRef}
       type="file"
       multiple
-      accept=".stl,.obj,.mtl,model/stl,model/obj"
+      accept=".stl,.obj,.mtl,.3mf,model/stl,model/obj,model/3mf"
       className="hidden"
       onChange={(e) => handle(e.target.files)}
     />
@@ -67,7 +67,7 @@ export default function Dropzone({ onFiles, compact, disabled }: Props) {
                  : 'border-white/15 text-slate-300 hover:border-sky-400/60 hover:text-white'
           } disabled:opacity-40`}
         >
-          ⤒ Drop .stl / .obj (+ .mtl) or click to browse
+          ⤒ Drop .stl / .obj (+ .mtl) / .3mf or click to browse
         </button>
         {input}
         {err && <p className="text-[11px] text-red-400">{err}</p>}
@@ -89,10 +89,10 @@ export default function Dropzone({ onFiles, compact, disabled }: Props) {
         <div>
           <h2 className="text-xl font-semibold text-white">Drop your model here</h2>
           <p className="mt-1 max-w-md text-sm text-slate-400">
-            <span className="font-mono text-slate-300">.stl</span> (ASCII or Binary) or{' '}
-            <span className="font-mono text-slate-300">.obj</span> — drop the{' '}
-            <span className="font-mono text-slate-300">.mtl</span> alongside it to unlock
-            colour-region analysis.
+            <span className="font-mono text-slate-300">.stl</span>,{' '}
+            <span className="font-mono text-slate-300">.obj</span> (+ optional{' '}
+            <span className="font-mono text-slate-300">.mtl</span>), or{' '}
+            <span className="font-mono text-slate-300">.3mf</span> with assemblies and material colours.
           </p>
         </div>
       </div>

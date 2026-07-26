@@ -199,13 +199,14 @@ Press **Control+C** in Terminal to stop the development app.
 1. Select **Browse Files** or drop a model into the window.
 2. Choose one of the supported input types:
    - Binary or ASCII `.stl`
-   - Wavefront `.obj`
-   - An optional `.mtl` selected alongside its `.obj`
-3. Review the model in the 3D viewport.
+   - Wavefront `.obj` with an optional `.mtl`
+   - `.3mf` packages with build assemblies and material colours
+3. Review the model’s solid/open status and enable **Repair open mesh** if needed.
 4. Choose the desired segmentation strategy and options.
 5. Select **Slice Model**.
-6. Review the generated parts and cut planes.
-7. Select **Download .ZIP** to export the segmented STL files.
+6. In the **Cuts** tab, enable **PEG** on any cut that needs guide pegs and matching sockets.
+7. Review the generated parts and cut planes.
+8. Select **Download .ZIP** to export the segmented STL files.
 
 The browser version downloads through the browser. The native version opens the macOS Save dialog.
 
