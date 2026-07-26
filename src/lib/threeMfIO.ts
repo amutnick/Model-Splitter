@@ -55,16 +55,29 @@ interface RawMesh {
 
 interface RawComponent {
   objectId: string;
+  partPath: string;
   transform: Transform;
 }
 
 interface RawObject {
   id: string;
   name: string;
+  partPath: string;
+  unitScale: number;
+  properties: Map<string, PropertyResource>;
   pid?: string;
   pindex?: number;
   mesh?: RawMesh;
   components: RawComponent[];
+}
+
+interface ModelPart {
+  path: string;
+  document: Document;
+  unit: string;
+  unitScale: number;
+  properties: Map<string, PropertyResource>;
+  objects: Map<string, RawObject>;
 }
 
 const IDENTITY: Transform = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
@@ -82,6 +95,38 @@ const UNIT_TO_MM: Record<string, number> = {
 
 const localName = (element: Element): string =>
   (element.localName || element.tagName.split(':').pop() || element.tagName).toLowerCase();
+
+function attributeByLocalName(element: Element, name: string): string | null {
+  const direct = element.getAttribute(name);
+  if (direct !== null) return direct;
+  for (let i = 0; i < element.attributes.length; i++) {
+    const attribute = element.attributes.item(i);
+    const attributeName = (attribute?.localName || attribute?.name.split(':').pop() || '').toLowerCase();
+    if (attributeName === name.toLowerCase()) return attribute?.value ?? null;
+  }
+  return null;
+}
+
+function normalizePackagePath(path: string): string {
+  const decoded = (() => {
+    try { return decodeURIComponent(path); } catch { return path; }
+  })();
+  const parts: string[] = [];
+  for (const part of decoded.replace(/\\/g, '/').split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') parts.pop();
+    else parts.push(part);
+  }
+  return parts.join('/');
+}
+
+function resolvePackagePath(currentPart: string, target: string | null): string {
+  if (!target) return normalizePackagePath(currentPart);
+  if (target.startsWith('/')) return normalizePackagePath(target);
+  const base = normalizePackagePath(currentPart).split('/');
+  base.pop();
+  return normalizePackagePath([...base, target].join('/'));
+}
 
 function childElements(parent: Element | Document, name?: string): Element[] {
   const out: Element[] = [];
@@ -119,12 +164,15 @@ function optionalIndex(element: Element, attribute: string): number | undefined 
   return Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
-function parseTransform(raw: string | null): Transform {
+function parseTransform(raw: string | null, translationScale = 1): Transform {
   if (!raw) return [...IDENTITY];
   const values = raw.trim().split(/\s+/).map(Number);
   if (values.length !== 12 || values.some((value) => !Number.isFinite(value))) {
     throw new ThreeMfParseError('3MF contains an invalid 3×4 transform matrix.');
   }
+  values[9] *= translationScale;
+  values[10] *= translationScale;
+  values[11] *= translationScale;
   return values as Transform;
 }
 
@@ -147,11 +195,11 @@ function compose(parent: Transform, local: Transform): Transform {
 }
 
 function applyTransform(transform: Transform, point: [number, number, number], scale: number): [number, number, number] {
-  const [x, y, z] = point;
+  const x = point[0] * scale, y = point[1] * scale, z = point[2] * scale;
   return [
-    (transform[0] * x + transform[3] * y + transform[6] * z + transform[9]) * scale,
-    (transform[1] * x + transform[4] * y + transform[7] * z + transform[10]) * scale,
-    (transform[2] * x + transform[5] * y + transform[8] * z + transform[11]) * scale,
+    transform[0] * x + transform[3] * y + transform[6] * z + transform[9],
+    transform[1] * x + transform[4] * y + transform[7] * z + transform[10],
+    transform[2] * x + transform[5] * y + transform[8] * z + transform[11],
   ];
 }
 
@@ -225,7 +273,12 @@ function parseMesh(element: Element): RawMesh {
   return { vertices, triangles };
 }
 
-function parseObjects(document: Document): Map<string, RawObject> {
+function parseObjects(
+  document: Document,
+  partPath: string,
+  unitScale: number,
+  properties: Map<string, PropertyResource>,
+): Map<string, RawObject> {
   const objects = new Map<string, RawObject>();
   for (const element of descendants(document, 'object')) {
     const id = element.getAttribute('id');
@@ -236,12 +289,19 @@ function parseObjects(document: Document): Map<string, RawObject> {
       ? childElements(componentsElement, 'component').map((component) => {
         const objectId = component.getAttribute('objectid');
         if (!objectId) throw new ThreeMfParseError('3MF component is missing objectid.');
-        return { objectId, transform: parseTransform(component.getAttribute('transform')) };
+        return {
+          objectId,
+          partPath: resolvePackagePath(partPath, attributeByLocalName(component, 'path')),
+          transform: parseTransform(component.getAttribute('transform'), unitScale),
+        };
       })
       : [];
     objects.set(id, {
       id,
       name: element.getAttribute('name') || `object_${id}`,
+      partPath,
+      unitScale,
+      properties,
       pid: element.getAttribute('pid') || undefined,
       pindex: optionalIndex(element, 'pindex'),
       mesh: meshElement ? parseMesh(meshElement) : undefined,
@@ -254,11 +314,10 @@ function parseObjects(document: Document): Map<string, RawObject> {
 function propertyForTriangle(
   triangle: RawTriangle,
   object: RawObject,
-  properties: Map<string, PropertyResource>,
 ): PropertyEntry | null {
   const pid = triangle.pid ?? object.pid;
   if (!pid) return null;
-  const resource = properties.get(pid);
+  const resource = object.properties.get(pid);
   if (!resource) return null;
   const indices = triangle.p.map((index) => index ?? object.pindex).filter((index): index is number => index !== undefined);
   if (!indices.length) return null;
@@ -288,6 +347,65 @@ function parseXml(xml: string): Document {
   }
 }
 
+async function findRootModelPath(zip: JSZip, pathLookup: Map<string, string>): Promise<string> {
+  const relationshipsName = pathLookup.get('_rels/.rels');
+  if (relationshipsName) {
+    try {
+      const relationships = parseXml(await zip.file(relationshipsName)!.async('string'));
+      const rootRelationship = descendants(relationships, 'relationship').find((relationship) =>
+        (relationship.getAttribute('type') || '').toLowerCase().includes('/3dmodel'),
+      );
+      const target = rootRelationship?.getAttribute('target');
+      if (target) {
+        const resolved = normalizePackagePath(target).toLowerCase();
+        const actual = pathLookup.get(resolved);
+        if (actual) return actual;
+      }
+    } catch {
+      // Some exporters omit or malform package relationships. The conventional
+      // root path below remains a safe fallback.
+    }
+  }
+
+  return pathLookup.get('3d/3dmodel.model')
+    ?? [...pathLookup.entries()].find(([normalized]) => /(^|\/)3dmodel\.model$/i.test(normalized))?.[1]
+    ?? [...pathLookup.entries()].find(([normalized]) => /\.model$/i.test(normalized))?.[1]
+    ?? '';
+}
+
+async function loadModelParts(zip: JSZip, pathLookup: Map<string, string>): Promise<Map<string, ModelPart>> {
+  const parts = new Map<string, ModelPart>();
+  let totalXmlBytes = 0;
+  for (const [normalized, actual] of pathLookup) {
+    if (!/\.model$/i.test(normalized)) continue;
+    const xml = await zip.file(actual)!.async('string');
+    const bytes = new TextEncoder().encode(xml).byteLength;
+    totalXmlBytes += bytes;
+    if (bytes > MAX_MODEL_XML_BYTES || totalXmlBytes > MAX_MODEL_XML_BYTES) {
+      throw new ThreeMfParseError('3MF model XML exceeds the 128 MB safety limit.');
+    }
+    const document = parseXml(xml);
+    const modelElement = document.documentElement;
+    if (!modelElement) throw new ThreeMfParseError(`3MF model part ${actual} has no root element.`);
+    const unit = (modelElement.getAttribute('unit') || 'millimeter').toLowerCase();
+    const unitScale = UNIT_TO_MM[unit];
+    if (!unitScale) throw new ThreeMfParseError(`Unsupported 3MF model unit in ${actual}: ${unit}.`);
+    const properties = parseProperties(document);
+    const path = normalizePackagePath(actual);
+    const part: ModelPart = {
+      path,
+      document,
+      unit,
+      unitScale,
+      properties,
+      objects: new Map(),
+    };
+    part.objects = parseObjects(document, path, unitScale, properties);
+    parts.set(path.toLowerCase(), part);
+  }
+  return parts;
+}
+
 /** Parse a complete zipped .3mf package into Model Splitter's triangle soup. */
 export async function parse3MF(buffer: ArrayBuffer): Promise<ThreeMfResult> {
   if (!buffer.byteLength) throw new ThreeMfParseError('3MF file is empty.');
@@ -298,34 +416,36 @@ export async function parse3MF(buffer: ArrayBuffer): Promise<ThreeMfResult> {
     throw new ThreeMfParseError(`Could not open the 3MF package: ${(error as Error).message}`);
   }
 
-  const modelPath = Object.keys(zip.files).find((name) => /^3d\/3dmodel\.model$/i.test(name))
-    ?? Object.keys(zip.files).find((name) => /(^|\/)3dmodel\.model$/i.test(name));
-  if (!modelPath) throw new ThreeMfParseError('3MF package does not contain a 3D model part.');
-
-  const xml = await zip.file(modelPath)!.async('string');
-  if (new TextEncoder().encode(xml).byteLength > MAX_MODEL_XML_BYTES) {
-    throw new ThreeMfParseError('3MF model XML exceeds the 128 MB safety limit.');
+  const pathLookup = new Map<string, string>();
+  for (const name of Object.keys(zip.files)) {
+    pathLookup.set(normalizePackagePath(name).toLowerCase(), name);
   }
-  const document = parseXml(xml);
-  const modelElement = document.documentElement;
-  if (!modelElement) throw new ThreeMfParseError('3MF model XML has no root element.');
-  const unit = (modelElement.getAttribute('unit') || 'millimeter').toLowerCase();
-  const unitScale = UNIT_TO_MM[unit];
-  if (!unitScale) throw new ThreeMfParseError(`Unsupported 3MF model unit: ${unit}.`);
+  const rootActualPath = await findRootModelPath(zip, pathLookup);
+  if (!rootActualPath) throw new ThreeMfParseError('3MF package does not contain a 3D model part.');
 
-  const properties = parseProperties(document);
-  const objects = parseObjects(document);
-  if (!objects.size) throw new ThreeMfParseError('3MF model contains no objects.');
+  const parts = await loadModelParts(zip, pathLookup);
+  const rootPath = normalizePackagePath(rootActualPath).toLowerCase();
+  const rootPart = parts.get(rootPath);
+  if (!rootPart) throw new ThreeMfParseError(`3MF root model part ${rootActualPath} could not be loaded.`);
+  if (!rootPart.objects.size) throw new ThreeMfParseError('3MF root model contains no objects.');
 
   const positions: number[] = [];
   const triangleProperties: (PropertyEntry | null)[] = [];
   let instantiatedObjects = 0;
 
-  const renderObject = (objectId: string, transform: Transform, stack: Set<string>) => {
-    if (stack.has(objectId)) throw new ThreeMfParseError(`3MF component cycle detected at object ${objectId}.`);
-    const object = objects.get(objectId);
-    if (!object) throw new ThreeMfParseError(`3MF references missing object ${objectId}.`);
-    stack.add(objectId);
+  const renderObject = (partPath: string, objectId: string, transform: Transform, stack: Set<string>) => {
+    const normalizedPartPath = normalizePackagePath(partPath).toLowerCase();
+    const key = `${normalizedPartPath}#${objectId}`;
+    if (stack.has(key)) throw new ThreeMfParseError(`3MF component cycle detected at ${key}.`);
+    const part = parts.get(normalizedPartPath);
+    if (!part) {
+      throw new ThreeMfParseError(`3MF component references missing model part “${partPath}”.`);
+    }
+    const object = part.objects.get(objectId);
+    if (!object) {
+      throw new ThreeMfParseError(`3MF model part “${part.path}” references missing object ${objectId}.`);
+    }
+    stack.add(key);
     instantiatedObjects++;
 
     if (object.mesh) {
@@ -333,10 +453,10 @@ export async function parse3MF(buffer: ArrayBuffer): Promise<ThreeMfResult> {
       for (const triangle of object.mesh.triangles) {
         const order = mirrored ? [triangle.v[0], triangle.v[2], triangle.v[1]] : triangle.v;
         for (const vertexIndex of order) {
-          const point = applyTransform(transform, object.mesh.vertices[vertexIndex], unitScale);
+          const point = applyTransform(transform, object.mesh.vertices[vertexIndex], object.unitScale);
           positions.push(point[0], point[1], point[2]);
         }
-        triangleProperties.push(propertyForTriangle(triangle, object, properties));
+        triangleProperties.push(propertyForTriangle(triangle, object));
         if (triangleProperties.length > MAX_TRIANGLES) {
           throw new ThreeMfParseError(`3MF exceeds the ${MAX_TRIANGLES.toLocaleString()} triangle limit.`);
         }
@@ -344,22 +464,28 @@ export async function parse3MF(buffer: ArrayBuffer): Promise<ThreeMfResult> {
     }
 
     for (const component of object.components) {
-      renderObject(component.objectId, compose(transform, component.transform), stack);
+      renderObject(component.partPath, component.objectId, compose(transform, component.transform), stack);
     }
-    stack.delete(objectId);
+    stack.delete(key);
   };
 
-  const buildElement = descendants(document, 'build')[0];
+  const buildElement = descendants(rootPart.document, 'build')[0];
   const buildItems = buildElement ? childElements(buildElement, 'item') : [];
   if (buildItems.length) {
     for (const item of buildItems) {
       const objectId = item.getAttribute('objectid');
       if (!objectId) throw new ThreeMfParseError('3MF build item is missing objectid.');
-      renderObject(objectId, parseTransform(item.getAttribute('transform')), new Set());
+      const itemPartPath = resolvePackagePath(rootPart.path, attributeByLocalName(item, 'path'));
+      renderObject(
+        itemPartPath,
+        objectId,
+        parseTransform(item.getAttribute('transform'), rootPart.unitScale),
+        new Set(),
+      );
     }
   } else {
-    for (const object of objects.values()) {
-      if (object.mesh) renderObject(object.id, IDENTITY, new Set());
+    for (const object of rootPart.objects.values()) {
+      if (object.mesh) renderObject(rootPart.path, object.id, IDENTITY, new Set());
     }
   }
 
@@ -381,18 +507,21 @@ export async function parse3MF(buffer: ArrayBuffer): Promise<ThreeMfResult> {
   }
 
   const notes = [
-    `3MF ${unit} units converted to millimetres.`,
+    `3MF ${rootPart.unit} units converted to millimetres.`,
     `${instantiatedObjects} object instance(s) loaded from the build assembly.`,
   ];
+  if (parts.size > 1) notes.push(`${parts.size} linked 3MF model part(s) resolved.`);
   if (colored) notes.push(`${materialMap.size} 3MF material/colour assignment(s) loaded.`);
-  if (descendants(document, 'texture2d').length) notes.push('3MF texture maps are not imported; geometry and material colours were retained.');
+  if ([...parts.values()].some((part) => descendants(part.document, 'texture2d').length)) {
+    notes.push('3MF texture maps are not imported; geometry and material colours were retained.');
+  }
 
   return {
     positions: new Float32Array(positions),
     ...(colorsOut ? { colors: colorsOut } : {}),
     materials: [...materialMap.values()].sort((a, b) => b.triangles - a.triangles),
     objectCount: instantiatedObjects,
-    unit,
+    unit: rootPart.unit,
     notes,
   };
 }
