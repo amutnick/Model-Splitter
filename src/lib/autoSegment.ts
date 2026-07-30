@@ -375,6 +375,165 @@ function allowedAxes(opts: PlannerOptions, depth: number): Axis[] {
   return [0, 1, 2];
 }
 
+export function snapOffsetToLocalFeature(
+  mesh: MeshData,
+  axis: Axis,
+  initialOffset: number,
+  binWidth: number,
+  profile: AxisProfile,
+  bi: number,
+): number {
+  const p = mesh.positions;
+  const triCount = p.length / 9;
+
+  // Search range: ±2.5 bins around the initial offset to cover the smoothed plateau
+  const minVal = initialOffset - binWidth * 2.5;
+  const maxVal = initialOffset + binWidth * 2.5;
+
+  // 1. If it's a flat face, look for a tight concentration of vertices at an exact coordinate
+  const isFlatCut = profile.flatness[bi] > 0.15;
+  const isColorCut = profile.colorEdge[bi] > 0.40;
+
+  if (isFlatCut) {
+    const vertexCoords: number[] = [];
+    for (let i = 0; i < triCount; i++) {
+      const b = i * 9;
+      const v0 = p[b + axis];
+      const v1 = p[b + 3 + axis];
+      const v2 = p[b + 6 + axis];
+      if (v0 >= minVal && v0 <= maxVal) vertexCoords.push(v0);
+      if (v1 >= minVal && v1 <= maxVal) vertexCoords.push(v1);
+      if (v2 >= minVal && v2 <= maxVal) vertexCoords.push(v2);
+    }
+
+    if (vertexCoords.length > 0) {
+      vertexCoords.sort((a, b) => a - b);
+      const eps = binWidth * 0.002; // very tight tolerance for flat faces
+      let bestVal = initialOffset;
+      let maxCount = 0;
+      let startIdx = 0;
+
+      for (let i = 0; i < vertexCoords.length; i++) {
+        while (vertexCoords[i] - vertexCoords[startIdx] > eps) {
+          startIdx++;
+        }
+        const count = i - startIdx + 1;
+        if (count > maxCount) {
+          maxCount = count;
+          bestVal = (vertexCoords[i] + vertexCoords[startIdx]) / 2;
+        }
+      }
+
+      if (maxCount >= 6) {
+        return bestVal;
+      }
+    }
+  }
+
+  // 2. Sub-binning for color transition peak or narrow geometric neck
+  const SUB_BINS = 24;
+  const subArea = new Float64Array(SUB_BINS);
+  const subT = new Float32Array(SUB_BINS);
+  const subSpan = maxVal - minVal;
+  for (let i = 0; i < SUB_BINS; i++) {
+    subT[i] = minVal + (subSpan * (i + 0.5)) / SUB_BINS;
+  }
+
+  const subColorCount = mesh.colors ? new Float64Array(SUB_BINS) : null;
+  const subColorR = mesh.colors ? new Float64Array(SUB_BINS) : null;
+  const subColorG = mesh.colors ? new Float64Array(SUB_BINS) : null;
+  const subColorB = mesh.colors ? new Float64Array(SUB_BINS) : null;
+
+  for (let i = 0; i < triCount; i++) {
+    const b = i * 9;
+    const ax = p[b + 3] - p[b], ay = p[b + 4] - p[b + 1], az = p[b + 5] - p[b + 2];
+    const bx = p[b + 6] - p[b], by = p[b + 7] - p[b + 1], bz = p[b + 8] - p[b + 2];
+    let ux = ay * bz - az * by, uy = az * bx - ax * bz, uz = ax * by - ay * bx;
+    const len = Math.hypot(ux, uy, uz);
+    if (len === 0) continue;
+    const area = 0.5 * len;
+    ux /= len; uy /= len; uz /= len;
+
+    const cVal = (p[b + axis] + p[b + 3 + axis] + p[b + 6 + axis]) / 3;
+    if (cVal < minVal || cVal > maxVal) continue;
+
+    const frac = (cVal - minVal) / subSpan;
+    let sbin = Math.floor(frac * SUB_BINS);
+    if (sbin < 0) sbin = 0; else if (sbin >= SUB_BINS) sbin = SUB_BINS - 1;
+
+    const nAxis = axis === 0 ? ux : axis === 1 ? uy : uz;
+    subArea[sbin] += area * Math.abs(nAxis);
+
+    if (mesh.colors && subColorR && subColorG && subColorB && subColorCount) {
+      const colBase = i * 3;
+      subColorR[sbin] += mesh.colors[colBase] * area;
+      subColorG[sbin] += mesh.colors[colBase + 1] * area;
+      subColorB[sbin] += mesh.colors[colBase + 2] * area;
+      subColorCount[sbin] += area;
+    }
+  }
+
+  // Color transition snapping using perceptual Redmean metric
+  if (mesh.colors && subColorR && subColorG && subColorB && subColorCount && isColorCut) {
+    const mc: [number, number, number][] = [];
+    for (let s = 0; s < SUB_BINS; s++) {
+      const a = subColorCount[s];
+      if (a > 0) {
+        mc.push([subColorR[s] / a, subColorG[s] / a, subColorB[s] / a]);
+      } else {
+        mc.push(mc.length > 0 ? mc[mc.length - 1] : [0.7, 0.7, 0.72]);
+      }
+    }
+    let maxDiff = -1;
+    let bestSub = -1;
+    for (let s = 1; s < SUB_BINS; s++) {
+      const rMean = (mc[s][0] + mc[s - 1][0]) / 2;
+      const dr = mc[s][0] - mc[s - 1][0];
+      const dg = mc[s][1] - mc[s - 1][1];
+      const db = mc[s][2] - mc[s - 1][2];
+      const wR = rMean < 0.5 ? 2 : 3;
+      const wG = 4;
+      const wB = rMean < 0.5 ? 3 : 2;
+      const diff = wR * dr * dr + wG * dg * dg + wB * db * db;
+      if (diff > maxDiff) {
+        maxDiff = diff;
+        bestSub = s;
+      }
+    }
+    if (bestSub >= 0 && maxDiff > 0.01) {
+      return subT[bestSub];
+    }
+  }
+
+  // Flat face peak snapping in sub-bins
+  if (profile.flatness[bi] > 0.20) {
+    let maxSubArea = -1;
+    let bestSub = -1;
+    for (let s = 0; s < SUB_BINS; s++) {
+      if (subArea[s] > maxSubArea) {
+        maxSubArea = subArea[s];
+        bestSub = s;
+      }
+    }
+    if (bestSub >= 0) return subT[bestSub];
+  }
+
+  // Neck area minimization (the physical narrow valley of joints)
+  let minSubArea = Infinity;
+  let bestSub = -1;
+  for (let s = 0; s < SUB_BINS; s++) {
+    if (subArea[s] > 0 && subArea[s] < minSubArea) {
+      minSubArea = subArea[s];
+      bestSub = s;
+    }
+  }
+  if (bestSub >= 0) {
+    return subT[bestSub];
+  }
+
+  return initialOffset;
+}
+
 export function bestCut(mesh: MeshData, opts: PlannerOptions, depth: number): Candidate | null {
   const bounds = computeBounds(mesh);
   const maxExtent = Math.max(...bounds.size, 1e-9);
@@ -397,10 +556,13 @@ export function bestCut(mesh: MeshData, opts: PlannerOptions, depth: number): Ca
     // Slight Z preference at the top level so new flats can meet the bed.
     if (axis === 2 && depth === 0) score -= 0.10;
 
+    const binWidth = profile.t[1] - profile.t[0];
+    const snappedOffset = snapOffsetToLocalFeature(mesh, axis, profile.t[bi], binWidth, profile, bi);
+
     if (!best || score < best.cost) {
       best = {
         axis,
-        offset: profile.t[bi],
+        offset: snappedOffset,
         cost: score,
         quality: clamp01(1 - (bc + 0.35) / 1.6),
         reason: describe(profile, bi, !!mesh.colors),

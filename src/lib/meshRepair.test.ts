@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MeshData } from './stlIO';
 import { analyzeMeshTopology, repairBoundaryHoles } from './meshRepair';
 import { computeBounds } from './meshUtils';
-import { DEFAULT_OPTIONS, prepareMeshForSlicing, reapplyPlan, type PlanNode } from './autoSegment';
+import { DEFAULT_OPTIONS, prepareMeshForSlicing, reapplyPlan, type PlanNode, bestCut } from './autoSegment';
 import { slicePlane } from './slicePlane';
 
 const cubeTriangles = [
@@ -107,5 +107,47 @@ describe('mesh topology repair', () => {
       withoutConnectors.segments.reduce((sum, segment) => sum + segment.triangles, 0),
     );
     expect(result.segments.every((segment) => analyzeMeshTopology(segment.mesh).isSolid)).toBe(true);
+  });
+
+  it('snaps the cutting offset precisely to flat features', () => {
+    // A long box along Z, spanning from Z=0 to Z=2, with a flat divider at Z=1.
+    // Positions array is: bottom cube [0..1] and top cube [1..2].
+    const boxPositions = new Float32Array([
+      // Bottom cube (0 to 1)
+      0, 0, 0,  0, 1, 0,  1, 1, 0,
+      0, 0, 0,  1, 1, 0,  1, 0, 0,
+      0, 0, 1,  1, 0, 1,  1, 1, 1,
+      0, 0, 1,  1, 1, 1,  0, 1, 1,
+      0, 0, 0,  0, 0, 1,  0, 1, 1,
+      0, 0, 0,  0, 1, 1,  0, 1, 0,
+      1, 0, 0,  1, 1, 0,  1, 1, 1,
+      1, 0, 0,  1, 1, 1,  1, 0, 1,
+      0, 0, 0,  1, 0, 0,  1, 0, 1,
+      0, 0, 0,  1, 0, 1,  0, 0, 1,
+      0, 1, 0,  0, 1, 1,  1, 1, 1,
+      0, 1, 0,  1, 1, 1,  1, 1, 0,
+      
+      // Top cube (1 to 2)
+      0, 0, 1,  0, 1, 1,  1, 1, 1,
+      0, 0, 1,  1, 1, 1,  1, 0, 1,
+      0, 0, 2,  1, 0, 2,  1, 1, 2,
+      0, 0, 2,  1, 1, 2,  0, 1, 2,
+      0, 0, 1,  0, 0, 2,  0, 1, 2,
+      0, 0, 1,  0, 1, 2,  0, 1, 1,
+      1, 0, 1,  1, 1, 1,  1, 1, 2,
+      1, 0, 1,  1, 1, 2,  1, 0, 2,
+      0, 0, 1,  1, 0, 1,  1, 0, 2,
+      0, 0, 1,  1, 0, 2,  0, 0, 2,
+      0, 1, 1,  0, 1, 2,  1, 1, 2,
+      0, 1, 1,  1, 1, 2,  1, 1, 1,
+    ]);
+
+    const boxMesh: MeshData = { positions: boxPositions };
+    const options = { ...DEFAULT_OPTIONS, axis: 'z' as const };
+
+    const cut = bestCut(boxMesh, options, 0);
+    // The cut should have snapped exactly to Z = 1.0 (where the flat faces meet and there is a massive concentration of vertices)
+    expect(cut).not.toBeNull();
+    expect(cut!.offset).toBeCloseTo(1.0, 5);
   });
 });
