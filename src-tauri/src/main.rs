@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    stl_segmenter_lib::run()
+    model_splitter_lib::run()
 }

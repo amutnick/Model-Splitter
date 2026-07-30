@@ -6,6 +6,7 @@ interface Props {
   onSelect: (id: string | null) => void;
   onMove: (id: string, offset: number, committed: boolean) => void;
   onToggle: (id: string, enabled: boolean) => void;
+  onToggleConnectors: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
 }
 
@@ -20,7 +21,9 @@ const AXIS_STYLE = [
  * slid along its own axis (slider or numeric field), muted, or deleted —
  * deleting a cut collapses its whole subtree back into one part.
  */
-export default function CutList({ splits, selectedId, onSelect, onMove, onToggle, onDelete }: Props) {
+export default function CutList({
+  splits, selectedId, onSelect, onMove, onToggle, onToggleConnectors, onDelete,
+}: Props) {
   if (!splits.length) {
     return (
       <p className="rounded-lg border border-dashed border-white/10 px-3 py-5 text-center text-[11px] leading-relaxed text-slate-500">
@@ -68,6 +71,13 @@ export default function CutList({ splits, selectedId, onSelect, onMove, onToggle
                   </span>
                 </div>
               </div>
+              <button
+                title={s.connectors ? 'Remove guide pegs from this cut' : 'Add guide pegs and matching sockets to this cut'}
+                onClick={(e) => { e.stopPropagation(); onToggleConnectors(s.id, !s.connectors); }}
+                className={`rounded px-1.5 py-0.5 text-[9px] font-bold transition ${
+                  s.connectors ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40' : 'text-slate-500 hover:text-emerald-300'
+                }`}
+              >PEG</button>
               <button
                 title={s.enabled ? 'Mute this cut' : 'Enable this cut'}
                 onClick={(e) => { e.stopPropagation(); onToggle(s.id, !s.enabled); }}
